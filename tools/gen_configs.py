@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
-"""从全机型 .config 生成 16 份**单机型** config。
+# -*- coding: utf-8 -*-
+"""生成 16 份**单机型** .config（x-wrt 专用，基于官方模板）。
 
-思路
-----
-不使用「手写一份最小 .config 再让 OpenWrt 补」的路子：那样 target 默认值
-里没有 luci、也没有一堆无线驱动，补出来是残的。
+★ 为什么不再"自己攒一份底稿"
+------------------------------
+x-wrt 的 target 默认配置（natflow / natcap / base-config-setting / luci 全套 /
+默认分区 ……）全在官方模板里：
 
-这里反过来：拿**已经在用、且编过固件**的全机型 .config 当底稿 —— 它已经
-包含 luci、所有无线 kmod/firmware、以及全部功能包选择 —— 然后
+    feeds/x/rom/lede/config.rockchip-armv8          （约 9990 行，官方 rc 配置）
+    feeds/x/rom/lede/fix-config.sh                  （选完机型后必须跑）
 
-  1. 把 `CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_*` 收敛成只留一个；
-  2. 追加本固件要求「自带」的驱动与 beaverfffan 插件；
-  3. 交给 `make defconfig` 去收敛/补依赖，再把结果写回 configs/<机型>.config。
+官方流程（用户 2026-10-17 明确）：
 
-第 3 步是关键：defconfig 之后的 .config 才是 OpenWrt 真正认可的完整配置，
-用户 clone 下来 `cp configs/x.config .config && make defconfig && make -j`
-不会因为缺项而弹交互提问（非交互构建会直接失败）。
+    cp feeds/x/rom/lede/config.rockchip-armv8 .config
+    # 选机型（改 CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_<name>）
+    sh feeds/x/rom/lede/fix-config.sh
+    make defconfig && make -j$(nproc)
 
-同时脚本会检查追加的包在 defconfig 后**是否还在** —— 包名写错、依赖不满足
-或包不存在时 defconfig 会静默丢弃那一行，这是最容易漏的坑。
+`fix-config.sh` 做的事：把 `.config` 里所有 `CONFIG_DEFAULT_<pkg>=y` 对应的
+`CONFIG_PACKAGE_<pkg>=m` 改成 `=y`（"设备默认包"由模块改成内建），
+只有 dnsmasq 例外 —— 改成 `# … is not set`；另外补一把 apk。
 
-用法（在内核树根目录跑）：
-    python3 tools/gen_configs.py [内核树路径]
+本脚本在此基础上按机型收敛，并额外写死：
+  · 分区（默认 128 / 1024，仅影响镜像 padding，不参与编译）
+  · CONFIG_VERSION_NUMBER（固件里能看出是哪次 release）
+  · 只留一个设备符号（MULTI_PROFILE=y 下必须如此）
+
+⚠️ 不要在这里再手工注入风扇 / 5G 面板 ——
+   它们已经写在 `target/linux/rockchip/image/armv8.mk.hinlink` 的
+   DEVICE_PACKAGES 里（两条独立判据：有风扇就风扇、有复位脚就复位脚）。
+   device 定义是**唯一源**，这里只做**校验**。
+
+用法（在 x-wrt 树根）：
+    python3 tools/gen_configs.py [树路径] [--parts=128/1024] [--no-parts]
 """
 import os
 import re
@@ -29,13 +40,12 @@ import shutil
 import subprocess
 import sys
 
-TREE = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/xwrt-hinlink")
-SRC = os.path.join(TREE, ".config")
-OUT = os.path.join(TREE, "configs")
+TPL_REL = "feeds/x/rom/lede/config.rockchip-armv8"
+FIX_REL = "feeds/x/rom/lede/fix-config.sh"
 
 PREFIX = "CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_"
 
-# (configs/ 里的文件名, OpenWrt DEVICE 名)
+# (configs/ 文件名, OpenWrt DEVICE 名)
 DEVICES = [
     ("h28k",           "hinlink_h28k_rk3528"),
     ("h29k-v1.3-1.14", "hinlink_h29k-v1.3-1.14_rk3528"),
@@ -55,172 +65,149 @@ DEVICES = [
     ("h89k",           "hinlink_opc-h89k_rk3588"),
 ]
 
-# 本固件要求「自带」的无线驱动（用户 2026-10-14 指定）
-#   7921 -> kmod-mt7921e/s/u + kmod-mt7921-firmware     （底稿里已有）
-#   7922 -> kmod-mt7922-firmware（共用 mt7921e 驱动）    （底稿里已有）
-#   7916 -> kmod-mt7915e + kmod-mt7916-firmware          （底稿里已有）
-#   aic8800 -> kmod-aic8800-{pcie,sdio,usb}              （底稿里已有）
-#   7925 / nfa765 底稿里是缺的，必须在这里补：
-#     7925 只有 -common，firmware 没选 → 会 "Direct firmware load failed"
-#     nfa765 = QCNFA765/WCN6855，走 ath11k，底稿里 ath11k 整个是 not set
-EXTRA_COMMON = """
-# ---- HinLink 固件自带驱动/插件（由 tools/gen_configs.py 追加）----
-CONFIG_PACKAGE_kmod-mt7925e=y
-CONFIG_PACKAGE_kmod-mt7925-firmware=y
-CONFIG_PACKAGE_kmod-ath11k=y
-CONFIG_PACKAGE_kmod-ath11k-pci=y
-CONFIG_PACKAGE_ath11k-firmware-wcn6855=y
-CONFIG_PACKAGE_luci-app-oled=y
-"""
-
-# ★ 风扇插件与 5G 复位面板是**两个独立的判据**（用户 2026-10-15 更正）：
-#
-#       有风扇        -> 编风扇插件（fancontrol + luci-app-fancontrol）
-#       有 5G 复位脚  -> 编 5G 复位面板（luci-app-hinlink-modem-hardreset）
-#
-# ⚠️ 早先我误写成「同时具备风扇与 5G 复位脚」取**交集**，结果 5G 面板只编了 5 个
-#    机型，把「有复位脚但没有风扇」的 H29K 全系漏掉了。**不要再取交集。**
-#
-# 硬件能力表 2026-10-15 重新逐个 grep DTS 核实。
-# ★ 必须区分「真实节点」与「注释里提到」—— 两个真实的误判源：
-#     · ht2 的 dts 里有一行注释「无 4G/5G LED 与 rfkill（H29K 才有）」
-#       ⇒ 直接 grep rfkill 会把 ht2 误判成「有复位脚」
-#     · h89k 的 dts 里有一行注释「风扇 = pwm14，5 档（由 dtsi 的 pwm-fan 提供）」
-#       ⇒ 直接 grep pwm-fan 会把它误判成「本文件有风扇」（其实在 dtsi 里）
-#   所以判据是 **`compatible = "rfkill-gpio"` / 真实 pwm-fan 节点**，不是裸关键词。
-#
-#   有风扇（5 个）：
-#     h69k            —— rk3568-hinlink-h69k-3eth.dts 自带 pwm-fan
-#     h69k-mini       —— rk3568-hinlink-h69k-mini.dts 自带 pwm-fan
-#     h88k-v2/v3、h89k —— 三者 #include "rk3588-hinlink.dtsi"，
-#                        风扇节点（pwm14，5 档 cooling-levels）在 **dtsi** 里，
-#                        只 grep 各自的 dts 会得出「无风扇」的错误结论
-#
-#   有 5G 复位脚（8 个）：
-#     h29k 全系 3 个   —— GPIO4_B4 复位（低有效）+ GPIO4_B5 供电
-#     h69k / h69k-mini —— GPIO0_C0（单路，低有效）
-#     h88k-v2/v3、h89k —— GPIO4_C6 复位（高有效），定义在 rk3588-hinlink.dtsi
-#
-#   两者都没有：h28k / ht2 / h66k / h68k 全系
-#              （`rk3568-hinlink-opc.dtsi` 里既无 pwm-fan 也无 rfkill，已核实）
+# ★ 两条**独立**判据，别取交集（取交集会把"有复位脚但没风扇"的 H29K 全系漏掉）
 HAS_FAN = {"h69k", "h69k-mini", "h88k-v2", "h88k-v3", "h89k"}
 HAS_MODEM = {"h29k-v1.3-1.14", "h29k-v5-1.14", "h29k-v5-1.49",
              "h69k", "h69k-mini", "h88k-v2", "h88k-v3", "h89k"}
 
-FAN_ON = ("CONFIG_PACKAGE_luci-app-fancontrol=y\n"
-          "CONFIG_PACKAGE_fancontrol=y\n")
-FAN_OFF = ("# CONFIG_PACKAGE_luci-app-fancontrol is not set\n"
-           "# CONFIG_PACKAGE_fancontrol is not set\n")
-
-MODEM_ON = "CONFIG_PACKAGE_luci-app-hinlink-modem-hardreset=y\n"
-MODEM_OFF = "# CONFIG_PACKAGE_luci-app-hinlink-modem-hardreset is not set\n"
-
-# defconfig 之后必须仍然存在的包（丢了就是包名错/依赖不满足）
-# 注意：风扇相关包不在这里 —— 它只对 HAS_FAN 的机型要求（见 main）。
-MUST_KEEP_COMMON = [
-    "kmod-mt7921e", "kmod-mt7921-firmware",
-    "kmod-mt7922-firmware",
+# 必选（16 机型全带）
+MUST_KEEP = [
+    "luci-app-oled",
+    "kmod-mt7921e", "kmod-mt7922-firmware", "kmod-mt7925e",
     "kmod-mt7915e", "kmod-mt7916-firmware",
-    "kmod-mt7925e", "kmod-mt7925-firmware",
     "kmod-ath11k", "kmod-ath11k-pci", "ath11k-firmware-wcn6855",
     "kmod-aic8800-pcie", "kmod-aic8800-sdio", "kmod-aic8800-usb",
-    "luci-app-oled",
+    "kmod-r8169",
 ]
 
+VER_NUMBER = "16dev-2026.10.17"
 
-def make_single(base, dev, short):
-    """把全机型 .config 收敛成 dev 单机型（short 用于决定选哪些插件）。"""
+
+def sh(cmd, cwd):
+    return subprocess.run(cmd, cwd=cwd, shell=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          universal_newlines=True)
+
+
+def build_one(tpl, dev, parts, version):
     out = []
-    for ln in base.splitlines():
-        if PREFIX in ln:
-            m = re.search(re.escape(PREFIX) + r'([^\s=]+)', ln)
-            if not m:
-                continue
+    for ln in tpl.splitlines():
+        m = re.match(r'^(?:# )?' + re.escape(PREFIX) + r'([^\s=]+)', ln)
+        if m:
             name = m.group(1)
-            if name == dev:
-                out.append("%s%s=y" % (PREFIX, name))
-            else:
-                out.append("# %s%s is not set" % (PREFIX, name))
-        elif ln.startswith("CONFIG_TARGET_PROFILE="):
-            continue                      # 统一在末尾重设
-        elif ln.startswith("CONFIG_PACKAGE_luci-app-fancontrol") or \
-                ln.startswith("CONFIG_PACKAGE_fancontrol"):
-            continue                      # 由 HAS_FAN 在末尾统一决定
-        elif ln.startswith("CONFIG_PACKAGE_luci-app-hinlink-modem-hardreset"):
-            continue                      # 由 HAS_MODEM 在末尾统一决定
-        else:
-            out.append(ln)
+            out.append("%s%s=%s" % (PREFIX, name,
+                                    "y" if name == dev else "n"))
+            continue
+        if ln.startswith("CONFIG_TARGET_PROFILE="):
+            continue                        # MULTI_PROFILE 下由设备符号决定
+        if parts and ln.startswith("CONFIG_TARGET_KERNEL_PARTSIZE="):
+            out.append("CONFIG_TARGET_KERNEL_PARTSIZE=%d" % parts[0])
+            continue
+        if parts and ln.startswith("CONFIG_TARGET_ROOTFS_PARTSIZE="):
+            out.append("CONFIG_TARGET_ROOTFS_PARTSIZE=%d" % parts[1])
+            continue
+        if ln.startswith("CONFIG_VERSION_NUMBER="):
+            out.append('CONFIG_VERSION_NUMBER="%s"' % version)
+            continue
+        out.append(ln)
 
-    # 单机型：显式钉住 profile（defconfig 会据此校正 MULTI_PROFILE 等派生项）
-    out.append('CONFIG_TARGET_PROFILE="DEVICE_%s"' % dev)
-    out.append("# CONFIG_TARGET_PER_DEVICE_ROOTFS is not set")
-    out.append(EXTRA_COMMON)
-    # ★ 两个独立判据（不取交集）：有风扇 -> 风扇插件；有复位脚 -> 5G 面板
-    out.append(FAN_ON if short in HAS_FAN else FAN_OFF)
-    out.append(MODEM_ON if short in HAS_MODEM else MODEM_OFF)
+    out.append("# ---- HinLink：本机型 ----")
+    out.append("%s%s=y" % (PREFIX, dev))
     return "\n".join(out) + "\n"
 
 
 def main():
-    if not os.path.isfile(SRC):
-        sys.exit("找不到底稿 %s" % SRC)
-    base = open(SRC, encoding="utf-8").read()
-    os.makedirs(OUT, exist_ok=True)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    tree = os.path.expanduser(args[0]) if args else os.path.expanduser("~/xwrt-hinlink")
 
-    defconfig = os.path.join(TREE, ".config")
+    parts = (128, 1024)
+    if "--no-parts" in sys.argv:
+        parts = None
+    for a in sys.argv[1:]:
+        if a.startswith("--parts="):
+            k, r = a.split("=", 1)[1].split("/")
+            parts = (int(k), int(r))
+
+    tpl_p = os.path.join(tree, TPL_REL)
+    fix_p = os.path.join(tree, FIX_REL)
+    if not os.path.isfile(tpl_p):
+        sys.exit("找不到官方模板 %s（先 ./scripts/feeds install -a）" % tpl_p)
+    if not os.path.isfile(fix_p):
+        sys.exit("找不到 %s" % fix_p)
+
+    tpl = open(tpl_p, encoding="utf-8").read()
+    outdir = os.path.join(tree, "configs")
+    os.makedirs(outdir, exist_ok=True)
+    cfgp = os.path.join(tree, ".config")
+
+    print("底稿: %s（%d 行）" % (TPL_REL, len(tpl.splitlines())))
+    print("分区: %s    版本号: %s"
+          % ("%d/%d" % parts if parts else "官方默认", VER_NUMBER))
+    print("风扇（有风扇）      -> %s" % " ".join(sorted(HAS_FAN)))
+    print("5G 复位面板（有脚） -> %s\n" % " ".join(sorted(HAS_MODEM)))
+
     ok = fail = 0
-    print("风扇插件（有风扇）      -> %s" % " ".join(sorted(HAS_FAN)))
-    print("5G 复位面板（有复位脚） -> %s\n" % " ".join(sorted(HAS_MODEM)))
     for short, dev in DEVICES:
-        p = os.path.join(OUT, short + ".config")
+        p = os.path.join(outdir, short + ".config")
         open(p, "w", encoding="utf-8", newline="\n").write(
-            make_single(base, dev, short))
-        shutil.copy(p, defconfig)
+            build_one(tpl, dev, parts, VER_NUMBER))
+        shutil.copy(p, cfgp)
 
-        r = subprocess.run(["make", "defconfig"], cwd=TREE,
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           universal_newlines=True)
-        if r.returncode != 0:
-            print("!! %-16s defconfig 失败" % short)
-            print((r.stdout or "")[-1500:])
-            fail += 1
+        # ★ 官方流程的关键**顺序**（2026-10-17 踩过）：
+        #   fix-config.sh 是按 `.config` 里已存在的 `CONFIG_DEFAULT_<pkg>=y`
+        #   行来把对应的 `CONFIG_PACKAGE_<pkg>=m` 改成 `=y`。
+        #   而 DEFAULT_ 符号是 **defconfig 之后**才由 kconfig 物化出来的
+        #   ⇒ 必须先 defconfig、再 fix-config、再 defconfig 收敛。
+        #   先跑 fix-config 的话它只看到模板里那 28 条 target 级 DEFAULT_，
+        #   设备包一条都改不到（表现为 kmod-mt7921e 等仍是 =m）。
+        bad = False
+        for cmd, tag in (("make defconfig", "defconfig#1"),
+                         ("sh %s" % FIX_REL, "fix-config.sh"),
+                         ("make defconfig", "defconfig#2")):
+            r = sh(cmd, tree)
+            if r.returncode != 0:
+                print("!! %-16s %s 失败" % (short, tag))
+                print((r.stdout or "")[-1200:])
+                fail += 1
+                bad = True
+                break
+        if bad:
             continue
 
-        shutil.copy(defconfig, p)
+        shutil.copy(cfgp, p)
         after = open(p, encoding="utf-8").read()
 
-        must = list(MUST_KEEP_COMMON)
-        if short in HAS_FAN:
-            must += ["luci-app-fancontrol", "fancontrol"]
-        if short in HAS_MODEM:
-            must.append("luci-app-hinlink-modem-hardreset")
-        miss = [k for k in must if ("CONFIG_PACKAGE_%s=y" % k) not in after]
-        # 反向检查：不该选的机型别被别处（比如底稿）带进来
-        if short not in HAS_FAN and "CONFIG_PACKAGE_fancontrol=y" in after:
-            miss.append("!(误选)风扇")
-        if short not in HAS_MODEM and \
-                "CONFIG_PACKAGE_luci-app-hinlink-modem-hardreset=y" in after:
-            miss.append("!(误选)5G复位面板")
+        # ★ 官方模板里 CONFIG_TARGET_PER_DEVICE_ROOTFS=y（每机型独立 rootfs）。
+        #   这种模式下"某机型装哪些包"**不由 CONFIG_PACKAGE_*=y 决定**，
+        #   而是由 image.mk 里该 device 的 DEVICE_PACKAGES 在打包时决定
+        #   （所以 kmod-mt7921e / fancontrol 在 .config 里是 =m 属正常）。
+        #   ⇒ 这里只校验"机型 / 分区 / 版本"，
+        #     包的实际归属用**构建出来的 .manifest** 校验（tools/check_manifest.sh）。
+        pdr = "CONFIG_TARGET_PER_DEVICE_ROOTFS=y" in after
+        sel = re.findall(re.escape(PREFIX) + r'([^\s=]+)=y', after)
+        got = sel[0] if sel else "?"
+        miss = []
+        if len(sel) != 1 or got != dev:
+            miss.append("机型不符(%d 个设备:%s)" % (len(sel), ",".join(sel) or "无"))
+        if not pdr:
+            miss.append("PER_DEVICE_ROOTFS 不是 y")
+        if parts:
+            if ("CONFIG_TARGET_KERNEL_PARTSIZE=%d" % parts[0]) not in after:
+                miss.append("内核分区不是 %d" % parts[0])
+            if ("CONFIG_TARGET_ROOTFS_PARTSIZE=%d" % parts[1]) not in after:
+                miss.append("rootfs 分区不是 %d" % parts[1])
 
-        got = re.search(re.escape(PREFIX) + r'([^\s=]+)=y', after)
-        profile = re.search(r'^CONFIG_TARGET_PROFILE="?([^"\n]+)"?', after, re.M)
-
-        apps = ("风扇" if short in HAS_FAN else "..") + "/" + \
-               ("5G" if short in HAS_MODEM else "..")
         tag = "OK"
         if miss:
-            tag = "缺包(%d)" % len(miss)
-        if not got or got.group(1) != dev:
-            tag = "机型不符!"
-            fail += 1
-        elif miss:
+            tag = "有问题(%d)" % len(miss)
             fail += 1
         else:
             ok += 1
 
-        print("%-16s %-11s 插件=%-8s lines=%-5d device=%s"
-              % (short, tag, apps, len(after.splitlines()),
-                 got.group(1) if got else "?"))
+        apps = ("风扇" if short in HAS_FAN else "..") + "/" + \
+               ("5G" if short in HAS_MODEM else "..")
+        print("%-16s %-12s 插件=%-8s lines=%-5d device=%s"
+              % (short, tag, apps, len(after.splitlines()), got))
         if miss:
             print("                 缺失: %s" % " ".join(miss))
 

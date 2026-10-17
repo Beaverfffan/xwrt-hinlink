@@ -36,10 +36,14 @@
 # =====================================================================
 define Device/hinlink_common
   # --- LuCI ---
+  #   luci-app-oled 属于"16 机型全带"（外接 I²C SSD1306 0.91″），
+  #   以前是在 gen_configs 里手工注入 CONFIG_PACKAGE_luci-app-oled=y 的，
+  #   2026-10-17 改成写进 DEVICE_PACKAGES —— device 定义是唯一源，
+  #   这样走官方模板 + fix-config.sh 的流程也能自动带上。
   DEVICE_PACKAGES += luci luci-ssl luci-app-package-manager \
 	luci-i18n-base-zh-cn luci-proto-ipv6 luci-proto-ppp \
 	luci-mod-network luci-mod-status luci-mod-system luci-theme-bootstrap \
-	wpad-basic-mbedtls
+	wpad-basic-mbedtls luci-app-oled
   # --- 无线网卡：M.2 / PCIe ---
   #   ★ kmod-mt7915e 这**一个驱动同时支持 MT7915 与 MT7916 两种芯片**，
   #     但固件是**分开的两个包**，而 kmod-mt7915e 的 DEPENDS 里
@@ -91,10 +95,26 @@ define Device/hinlink_common
   #     依赖链（都很小）：+libusb-1.0 +libudev → libudev-zero +usbids
   #     （usbids 提供 /usr/share/usb.ids，没有它 lsusb 只显示 ID、无厂商名）
   DEVICE_PACKAGES += usbutils usbids
-  # --- 风扇 ---
+endef
+
+# =====================================================================
+# ★ 两条**互相独立**的硬件判据（别取交集 —— 取交集会漏掉「有复位脚
+#   但没风扇」的 H29K 全系，2026-10-15 就犯过）
+#
+#   有风扇       -> $(Device/hinlink_fan)     => 5 个机型
+#   有 5G 复位脚 -> $(Device/hinlink_modem)   => 8 个机型
+#
+# 判据必须落到**真实节点**：ht2 的 dts 注释里有 "rfkill"、h89k 的注释里有
+# "pwm-fan" 都会误判；h88k-v2/v3、h89k 的节点在公共 rk3588-hinlink.dtsi 里。
+# =====================================================================
+define Device/hinlink_fan
   DEVICE_PACKAGES += kmod-hwmon-core kmod-thermal kmod-hwmon-pwmfan \
 	kmod-hwmon-gpiofan fancontrol luci-app-fancontrol \
 	luci-i18n-fancontrol-zh-cn
+endef
+
+define Device/hinlink_modem
+  DEVICE_PACKAGES += luci-app-hinlink-modem-hardreset
 endef
 
 
@@ -358,6 +378,8 @@ define Device/hinlink_opc-h69k
   DEVICE_PACKAGES += kmod-r8169
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_fan)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_opc-h69k
 
@@ -380,6 +402,8 @@ define Device/hinlink_opc-h69k-mini
   DEVICE_PACKAGES += kmod-r8169
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_fan)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_opc-h69k-mini
 
@@ -462,6 +486,7 @@ define Device/hinlink_h29k-v1.3-1.14_rk3528
   DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_h29k-v1.3-1.14_rk3528
 
@@ -491,6 +516,7 @@ define Device/hinlink_h29k-v5-1.14_rk3528
   DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_h29k-v5-1.14_rk3528
 
@@ -516,6 +542,7 @@ define Device/hinlink_h29k-v5-1.49_rk3528
   DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_h29k-v5-1.49_rk3528
 
@@ -581,6 +608,8 @@ define Device/hinlink_opc-h89k_rk3588
   DEVICE_PACKAGES := kmod-r8169
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_fan)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_opc-h89k_rk3588
 
@@ -604,6 +633,8 @@ define Device/hinlink_h88k_v2
   DEVICE_PACKAGES := kmod-r8169 kmod-nvme
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_fan)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_h88k_v2
 
@@ -623,5 +654,7 @@ define Device/hinlink_h88k_v3
   # spidev 已内建（CONFIG_SPI_SPIDEV=y），无需额外包
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
+  $(Device/hinlink_fan)
+  $(Device/hinlink_modem)
 endef
 TARGET_DEVICES += hinlink_h88k_v3
