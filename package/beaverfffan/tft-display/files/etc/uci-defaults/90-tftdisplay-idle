@@ -1,0 +1,7 @@
+#!/bin/sh
+# /etc/tftdisplay.idle = 0 表示"永不息屏"（程序内置默认是 3 分钟）
+[ -f /etc/tftdisplay.idle ] || echo 0 > /etc/tftdisplay.idle
+# 让这个选择熬过 sysupgrade
+grep -q '^/etc/tftdisplay.idle$' /etc/sysupgrade.conf 2>/dev/null || \
+	echo '/etc/tftdisplay.idle' >> /etc/sysupgrade.conf
+exit 0

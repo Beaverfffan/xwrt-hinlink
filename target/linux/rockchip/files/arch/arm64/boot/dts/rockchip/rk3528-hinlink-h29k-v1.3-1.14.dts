@@ -630,3 +630,25 @@
 };
 
  
+
+/*
+ * ★ LCD 背光使能脚（GPIO0_A0）用 **gpio-hog 常开**。
+ *
+ * 为什么不用 `led-gpios`：fbtft 只有在解析到 `led-gpios` 时才注册 backlight 设备，
+ * 且设备名取的是驱动名（`fb_st7789v`），而 tft-display 的亮度页写死了
+ * `/sys/class/backlight/pinctrl:backlight` —— 两边对不上，亮度页照样失效。
+ * 1.14″ 这两款本来就是「GPIO 恒亮背光」（没有 PWM 调光），所以直接用 hog
+ * 把使能脚拉成常开最省事，也不依赖 fbtft 的行为。
+ *
+ * ★ 极性：厂商 dtb 里这一脚是 `backlight-gpios = <&gpio0 RK_PA0 GPIO_ACTIVE_HIGH>`
+ *   （flags = 0）⇒ 高电平点亮。若你的板子是低电平点亮（屏不亮但能摸到背光板
+ *   微微发灰），把下面 `output-high` 改成 `output-low` 即可。
+ */
+&gpio0 {
+	lcd-backlight-en-hog {
+		gpio-hog;
+		gpios = <RK_PA0 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "lcd-backlight-en";
+	};
+};

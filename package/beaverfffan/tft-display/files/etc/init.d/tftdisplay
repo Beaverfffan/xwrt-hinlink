@@ -1,0 +1,74 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2016 Aleksander Morgado
+
+USE_PROCD=1
+START=22
+STOP=1
+
+NAME=tftdisplay
+DAEMON=/usr/bin/$NAME
+PID_FILE=/var/run/$NAME.pid
+
+BL_DIR=/sys/class/backlight
+
+bl_report() {
+        for d in $BL_DIR/*; do
+                [ -d $d ] || continue
+                n=$(basename $d)
+                mx=$(cat $d/max_brightness 2>/dev/null)
+                cu=$(cat $d/brightness 2>/dev/null)
+                pw=$(cat $d/bl_power 2>/dev/null)
+                logger -t tftdisplay backlight $n max=$mx cur=$cu bl_power=$pw
+        done
+        [ -d $BL_DIR ] || logger -t tftdisplay FATAL-no-backlight-node-pwm_bl-did-not-probe
+        for g in /sys/class/graphics/fb*; do
+                [ -e $g/name ] && logger -t tftdisplay graphics $(basename $g) name=$(cat $g/name)
+        done
+        logger -t tftdisplay kmod-matched=$(lsmod | grep -c -e fbtft -e gc9307 -e axs5106)
+}
+
+bl_force_on() {
+        for d in $BL_DIR/*; do
+                [ -d $d ] || continue
+                mx=$(cat $d/max_brightness 2>/dev/null)
+                [ $mx -gt 0 ] 2>/dev/null || mx=255
+                want=$(( mx * 60 / 100 ))
+                [ $want -lt 1 ] && want=1
+                echo 0 > $d/bl_power 2>/dev/null
+                echo $want > $d/brightness 2>/dev/null
+                logger -t tftdisplay forced-on $(basename $d) brightness=$want max=$mx
+        done
+}
+
+disable_fbcon_cursor() {
+        for f in /sys/class/graphics/fbcon/cursor_blink /sys/class/graphics/fb*/cursor_blink; do
+                [ -w $f ] && echo 0 > $f 2>/dev/null
+        done
+        for t in /dev/tty1 /dev/tty0; do
+                [ -w $t ] && printf \\033[?25l > $t 2>/dev/null
+        done
+        return 0
+}
+
+start_service() {
+        sleep 1
+        bl_force_on
+        bl_report
+        ( sleep 25; bl_report ) &
+        disable_fbcon_cursor
+        procd_open_instance
+        procd_set_param command $DAEMON
+        procd_set_param stdout 1
+        procd_set_param stderr 1
+        procd_set_param pidfile $PID_FILE
+        procd_close_instance
+}
+
+stop_service() {
+        rm -f $PID_FILE
+}
+
+restart() {
+        stop
+        start
+}

@@ -627,47 +627,30 @@
 	};
 };
 
-/* ---- 1.49 寸触屏版新增：PWM 背光 ---- */
+/* ---- 1.49 寸触屏版新增：PWM6 背光 + AXS5106 电容触控 ---- */
 
-&pwm3 {
+/*
+ * ★ 背光 PWM = **pwm6**，不是 pwm3。
+ *   依据厂商 vendor-h29k-v5-1.49.dtb：
+ *     pwmpanel/panel-pwm-pin = <4 0x11 1 0x60>   → GPIO4_PC1 func1 = PWM6
+ *     backlight.pwms         = <0x68 0 0x61a8 1> → 0x68 = pwm@ffa98020 = pwm6
+ *   原先写成 &pwm3 + pwm3m0_pins 是错的（亮度根本调不动）。
+ * ★ 第 4 个 cell = PWM_POLARITY_INVERTED(1)：本机背光**反相**，
+ *   写大亮度值反而更暗（厂商原值 25000ns + flags 1）。
+ */
+&pwm6 {
 	status = "okay";
-	pinctrl-names = "active";
-	pinctrl-0 = <&pwm3m0_pins>;
-};
-
-&{/} {
-	/*
-	 * ★ 原来写成顶层裸节点 `backlight: backlight { ... };`，这在 DTS
-	 *   语法里是**非法的**（顶层只能是 / { } 或 &label { }），
-	 *   dtc 会报 syntax error。改为挂到根节点下。
-	 */
-	backlight: backlight {
-		compatible = "pwm-backlight";
-		pinctrl-names = "backlight";
-		pwms = <&pwm3 0 25000>;   /* 厂商原值：pwm3 通道0，25kHz */
-		brightness-levels = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
-			16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33
-			34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51
-			52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69
-			70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87
-			88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103
-			104 105 106 107 108 109 110 111 112 113 114 115 116 117
-			118 119 120 121 122 123 124 125 126 127 128 129 130 131
-			132 133 134 135 136 137 138 139 140 141 142 143 144 145
-			146 147 148 149 150 151 152 153 154 155 156 157 158 159
-			160 161 162 163 164 165 166 167 168 169 170 171 172 173
-			174 175 176 177 178 179 180 181 182 183 184 185 186 187
-			188 189 190 191 192 193 194 195 196 197 198 199 200 201
-			202 203 204 205 206 207 208 209 210 211 212 213 214 215
-			216 217 218 219 220 221 222 223 224 225 226 227 228 229
-			230 231 232 233 234 235 236 237 238 239 240 241 242 243
-			244 245 246 247 248 249 250 251 252 253 254 255>;
-		default-brightness-level = <153>;
-	};
+	pinctrl-names = "default";
+	pinctrl-0 = <&panel_pwm_pin>;
+	assigned-clock-rates = <100000000>;
 };
 
 &pinctrl {
 	pwmpanel {
+		panel_pwm_pin: panel-pwm-pin {
+			/* GPIO4_PC1 功能 1 = PWM6 */
+			rockchip,pins = <4 RK_PC1 1 &pcfg_pull_none>;
+		};
 	};
 
 	touchscreen {
@@ -679,9 +662,40 @@
 			rockchip,pins = <4 RK_PB3 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
-};
 
-/* ---- 1.49 寸触屏版新增：AXS5106 电容触控（I2C1 @ 0x63）---- */
+	/*
+	 * ★ 背光节点必须挂在 &pinctrl 下、且**不能有 reg**：
+	 *   pwm_bl.c 用 backlight_device_register(dev_name(&pdev->dev), ...) 注册，
+	 *   OF 对「无 reg 的子节点」用 <父名>:<节点名> 拼 platform device 名
+	 *   ⇒ /sys/class/backlight/pinctrl:backlight。
+	 *   tft-display 的亮度页把这个路径写死了（src/pages/brightness_page.c
+	 *   的 BACKLIGHT_DIR），名字一变亮度页就失效。
+	 */
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pinctrl-names = "backlight";
+		pwms = <&pwm6 0 25000 1>;
+		brightness-levels = <
+			0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+			16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+			32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47
+			48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63
+			64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
+			80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95
+			96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111
+			112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
+			128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143
+			144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159
+			160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175
+			176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191
+			192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207
+			208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223
+			224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
+			240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255
+		>;
+		default-brightness-level = <153>;
+	};
+};
 
 &i2c1 {
 	pinctrl-names = "default";
@@ -691,15 +705,36 @@
 	touchscreen@63 {
 		compatible = "chipone,axs5106";
 		reg = <0x63>;
-		interrupt-parent = <&gic>;
-		interrupts = <RK_PB2 IRQ_TYPE_LEVEL_HIGH>;
+		/* ★ GPIO 中断：父节点必须是 &gpio4，编号用 bank 内 RK_PB2。
+		 *   原来写成 <&gic> + <RK_PB2 ...> 是错的（GIC 要 SPI 号）。 */
+		interrupt-parent = <&gpio4>;
+		interrupts = <RK_PB2 IRQ_TYPE_LEVEL_LOW>;
 		interrupt-names = "touchscreen";
 		irq-gpios = <&gpio4 RK_PB2 GPIO_ACTIVE_HIGH>;
-		reset-gpios = <&gpio4 RK_PB3 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&gpio4 RK_PB3 GPIO_ACTIVE_HIGH>;  /* 厂商 dtb: flags=0 */
 		touchscreen-size-x = <172>;
 		touchscreen-size-y = <320>;
 		touchscreen-inverted-x;
 		touchscreen-inverted-y;
 		status = "okay";
+	};
+};
+
+/*
+ * ★ LCD 背光使能脚（GPIO0_A0）用 gpio-hog 常开。
+ *
+ * 不用 `led-gpios`：fbtft 只有解析到 `led-gpios` 才注册 backlight 设备，
+ * 而且设备名取驱动名（fb_st7789v / fb_gc9307），与 tft-display 写死的
+ * `/sys/class/backlight/pinctrl:backlight` 对不上 ⇒ 亮度页照样失效。
+ * 这一脚是背光**使能**（不是调光），直接常开最省事，也不依赖 fbtft 行为。
+ * 极性按厂商 dtb（backlight-gpios flags = 0 ⇒ 高有效）。若你的板子是低有效
+ * （屏不亮但背光板发灰），把 output-high 改成 output-low。
+ */
+&gpio0 {
+	lcd-backlight-en-hog {
+		gpio-hog;
+		gpios = <RK_PA0 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "lcd-backlight-en";
 	};
 };

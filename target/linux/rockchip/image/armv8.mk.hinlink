@@ -483,7 +483,10 @@ define Device/hinlink_h29k-v1.3-1.14_rk3528
   #   BUILD_DEVICES 已在我们的 Makefile 补丁里登记本机型，
   #   ⇒ make defconfig 会自动带上 CONFIG_PACKAGE_u-boot-hinlink-h29k-rk3528=y。
   UBOOT_DEVICE_NAME := hinlink-h29k-rk3528
-  DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169
+  # ★ 屏幕：tft-display（LVGL 系统信息页，写 /dev/fb0，背光走 /sys/class/backlight）
+  #   三个 H29K 变体都有屏：v1.3/v5-1.14 = ST7789V 135x240（GPIO 背光），
+  #   v5-1.49 = GC9307 172x320 + AXS5106 电容触控（PWM6 背光）。
+  DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169 tft-display
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
   $(Device/hinlink_modem)
@@ -513,7 +516,10 @@ define Device/hinlink_h29k-v5-1.14_rk3528
   #   BUILD_DEVICES 已在我们的 Makefile 补丁里登记本机型，
   #   ⇒ make defconfig 会自动带上 CONFIG_PACKAGE_u-boot-hinlink-h29k-rk3528=y。
   UBOOT_DEVICE_NAME := hinlink-h29k-rk3528
-  DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169
+  # ★ 屏幕：tft-display（LVGL 系统信息页，写 /dev/fb0，背光走 /sys/class/backlight）
+  #   三个 H29K 变体都有屏：v1.3/v5-1.14 = ST7789V 135x240（GPIO 背光），
+  #   v5-1.49 = GC9307 172x320 + AXS5106 电容触控（PWM6 背光）。
+  DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169 tft-display
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
   $(Device/hinlink_modem)
@@ -539,7 +545,11 @@ define Device/hinlink_h29k-v5-1.49_rk3528
   #   BUILD_DEVICES 已在我们的 Makefile 补丁里登记本机型，
   #   ⇒ make defconfig 会自动带上 CONFIG_PACKAGE_u-boot-hinlink-h29k-rk3528=y。
   UBOOT_DEVICE_NAME := hinlink-h29k-rk3528
-  DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169
+  # ★ 屏幕：tft-display（LVGL 系统信息页，写 /dev/fb0，背光走 /sys/class/backlight）
+  #   三个 H29K 变体都有屏：v1.3/v5-1.14 = ST7789V 135x240（GPIO 背光），
+  #   v5-1.49 = GC9307 172x320 + AXS5106 电容触控（PWM6 背光）。
+  DEVICE_PACKAGES := kmod-aic8800-sdio kmod-r8169 tft-display \
+	kmod-input-touchscreen-axs5106
   # ★ 通用包集（LuCI + 全无线网卡驱动 + 风扇驱动）
   $(Device/hinlink_common)
   $(Device/hinlink_modem)

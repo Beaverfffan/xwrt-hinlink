@@ -1,0 +1,13 @@
+config global 'settings'
+        option screen_enabled '1'
+        option display_mode 'system'
+        option indicator_enabled '0'
+        option network_interface 'br-lan'
+        option display_resolution '1.9'
+        option display_Backlight '1' 
+        option display_template '1' 
+
+config ws 'ws'
+        # 屏幕上所有信息都从这个 WebSocket 拿（服务端 modemserver 的 /display/ws）
+        # 地址与端口（127.0.0.1:8080）和通讯钥匙都写在程序里，这里只留一个开关
+        option enabled '1'
