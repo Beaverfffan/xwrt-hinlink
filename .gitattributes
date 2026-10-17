@@ -32,3 +32,10 @@
 hinlink-modem-hardreset     text eol=lf
 oled                        text eol=lf
 fancontrol.config           text eol=lf
+
+# ★ 这个补丁是**混合行尾**：2294 行 LF + 8 行 CRLF。
+#   那 8 行 CRLF patch 的目标文件 src/.../aic_load_fw/aic_bluetooth_main.c
+#   本身就是 CRLF，补丁的上下文必须跟着 CRLF，否则 patch 报
+#   "Hunk #1 FAILED at 69 (different line endings)"。
+#   ⇒ 整文件按二进制处理，禁止 git 做任何行尾转换。
+package/beaverfffan/aic8800/patches/020-wireless-6.16.patch -text

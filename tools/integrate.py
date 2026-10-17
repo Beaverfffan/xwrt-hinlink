@@ -307,6 +307,21 @@ def main():
     print("[4] 内核 patch")
     pd = os.path.join(rock, "patches-6.18")
     os.makedirs(pd, exist_ok=True)
+    # ★ 必须删掉上游这两个 hinlink 补丁：
+    #   101 用 patch **新建** rk3528-hinlink-h28k.dts，而我们的同名文件来自
+    #       files/，两套来源撞车 ⇒ 内核 prepare 阶段报
+    #       "The next patch would create the file ... which already exists!
+    #        Hunk #1 FAILED ... Patch failed!"
+    #   121 改的是同一批 dts（加 led-* alias），这些 alias 我们**已经写进
+    #       自己的 dts**，留着只会二次冲突。
+    #   （101 顺带把 h28k dtb 登记进内核 dts Makefile —— 用不到：
+    #     image.mk 的 Device/Build/dtb 是 cpp+dtc 直接编，不吃 dtb-y。）
+    for pat in ("101-arm64-dts-rockchip-Add-HINLINK-H28K.patch",
+                "121-arm64-dts-rockchip-add-led-aliases-for-HINLINK.patch"):
+        p = os.path.join(pd, pat)
+        if os.path.exists(p):
+            os.remove(p)
+            print("  - 删除上游 %s（与 files/ 里的同名 dts 冲突）" % pat)
     for f in sorted(glob.glob(os.path.join(src, "patches/*.patch"))):
         b = os.path.basename(f)
         shutil.copy2(f, os.path.join(pd, b))
