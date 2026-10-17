@@ -39,3 +39,6 @@ fancontrol.config           text eol=lf
 #   "Hunk #1 FAILED at 69 (different line endings)"。
 #   ⇒ 整文件按二进制处理，禁止 git 做任何行尾转换。
 package/beaverfffan/aic8800/patches/020-wireless-6.16.patch -text
+package/beaverfffan/aic8800/patches/030-update-firmware-path.patch -text
+package/beaverfffan/aic8800/patches/050-log-level.patch -text
+package/beaverfffan/aic8800/patches/080-fix-export-symbols-conflict.patch -text
