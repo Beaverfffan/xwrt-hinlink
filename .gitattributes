@@ -1,0 +1,34 @@
+# ★ 全线 LF：这个仓库里的东西最终都会进 x-wrt 构建树，
+#   CRLF 会让 dtc 解析失败、busybox ash 把 `esac\r` 当普通单词、
+#   patch 因行尾不匹配而拒收，Makefile 也会出现诡异行为。
+#   所以用 catch-all 一次性钉死，不再逐类列举（2026-10-17）。
+* text=auto eol=lf
+
+*.dts         text eol=lf
+*.dtsi        text eol=lf
+*.patch       text eol=lf
+*.diff        text eol=lf
+*.h           text eol=lf
+*.c           text eol=lf
+*.sh          text eol=lf
+01_leds       text eol=lf
+02_network    text eol=lf
+*.mk          text eol=lf
+*.hinlink     text eol=lf
+*.py          text eol=lf
+*.md          text eol=lf
+*.js          text eol=lf
+*.css         text eol=lf
+*.append      text eol=lf
+*.json        text eol=lf
+*.config      text eol=lf
+*.po          text eol=lf
+*.pot         text eol=lf
+*.htm         text eol=lf
+*.lua         text eol=lf
+
+# 包内这几个脚本没有扩展名，也要 LF
+50-hinlink-modem-hardreset  text eol=lf
+hinlink-modem-hardreset     text eol=lf
+oled                        text eol=lf
+fancontrol.config           text eol=lf

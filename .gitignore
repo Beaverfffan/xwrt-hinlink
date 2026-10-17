@@ -1,0 +1,16 @@
+# 编译产物
+*.o
+*.dtbo
+*.ko
+__pycache__/
+*.pyc
+
+# 本地构建目录（x-wrt 树整棵不进仓库）
+/bin/
+/build_dir/
+/dl/
+/staging_dir/
+/tmp/
+/logs/
+/.config
+/.config.old

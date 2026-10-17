@@ -1,0 +1,168 @@
+#!/bin/sh /lib/ucode/luci
+
+# HinLink 机型 LED 配置
+#
+# ★ 本文件的用法：由 tools/integrate.py 把下面**唯一一个 case 块的内容**
+#   插进官方 01_leds 的 `case $board in ... esac` 里（插在官方 `*)` 兜底**之前**）。
+#   所以本文件必须满足：
+#     1. 只有 **一个** `case $board in` 块（与官方一致）
+#     2. **不要**写 `*)` 兜底 —— 否则官方其他机型会落到本文件的兜底上
+#     3. 不要写 board_config_update / board_config_flush / exit 0
+#        （这些官方文件里已有）
+#   本文件同时也是一份**可独立运行**的合法脚本（便于本地校验）。
+#
+# ★ LED 标签从哪来（这是最容易错的地方）：
+#   内核 gpio-leds 驱动会用 DTS 的
+#       color = <LED_COLOR_ID_xxx>;  function = <LED_FUNCTION_yyy>;
+#   拼出 LED 名字 "<color>:<function>"（若 DTS 直接写 label = "..." 则用 label）。
+#   本仓库各 DTS 的 LED 名字实测如下 —— 改 DTS 一定要同步改这里：
+#
+#   RK3568（rk3568-hinlink-opc.dtsi，color/function 写法）
+#       blue:wan       GPIO3_A5  蓝    WAN 指示灯        (led-0 WAN)
+#       amber:disk     GPIO3_A7  琥珀  盘位/2.5G 灯       (led-1 DISK)
+#       green:status   GPIO3_B0  绿    系统状态灯         (led-2 STATUS, led_work)
+#   ⚠️ 厂商 2022/2023 固件用的是旧式 label "<boardname>:blue:net"；
+#      本仓库 DTS 已换成 mainline 的 color/function 写法，名字变成 blue:wan ——
+#      LED 名字必须跟着改，否则 /etc/init.d/led 找不到设备，灯不亮。
+#
+#   RK3528 H28K（rk3528-hinlink-h28k.dts）
+#       amber:lan      GPIO4_C1  琥珀  LAN 灯            (led-0 LAN)
+#       blue:wan       GPIO4_C0  蓝    WAN 灯            (led-1 WAN)
+#       green:status   GPIO4_B7  绿    系统状态灯         (led-2 STATUS, led_work)
+#
+#   RK3528 H29K 全系（厂商 dtb label 原值）
+#       red:modem_4g   GPIO4_C0  红    4G 模组灯
+#       blue:modem_5g  GPIO4_C3  蓝    5G 模组灯
+#       green:work     GPIO4_B7  绿    工作灯（led_work）
+#
+#   RK3528 HT2
+#       amber:lan      GPIO4_C0  琥珀  LAN 灯
+#       green:work     GPIO4_B7  绿    工作灯（led_work）
+#
+#   RK3588（rk3588-hinlink.dtsi，旧式 label 写法）
+#       blue:net / yellow:disk / green:sys / red:work
+#
+# 依据：厂商固件 board.d/01_leds 原文（fw22 / fw23 / fw29new / fw89k）
+#       + 上游 openwrt armv8/base-files/etc/board.d/01_leds
+#       + 各 DTS 里的 color/function / label 实际值
+
+. /lib/functions/leds.sh
+. /lib/functions/uci-defaults.sh
+
+board=$(board_name)
+
+board_config_update
+
+case $board in
+
+	# ======================= RK3568（rk3568-hinlink-opc.dtsi）=======================
+
+	# ---- H68K a-b（2022 双千兆，2 口）：WAN = eth0 ----
+	# 2026-10-12 改名：h68k-a / h68k-a-usb → h68k-a-b / h68k-a-b-usb
+	hinlink,opc-h68k-a-b|\
+	hinlink,opc-h68k-a-b-usb|\
+	hinlink,opc-h68k-a|\
+	hinlink,opc-h68k-a-usb|\
+	linkstar,opc-h68k-a)
+		ucidef_set_led_netdev "wan" "WAN" "blue:wan" "eth0"
+		;;
+
+	# ---- H68K c-d-f（2022~2023.4 四网口）：WAN = eth0 ----
+	# ★ 2026-10-12 按实机更正：原来写 eth1（照抄 2022 厂商固件），实机是 eth0。
+	#   同日把 c / d 与 c-usb3 / d-usb 合并为 c-d-f / c-d-f-usb。
+	# 同时收上游/厂商的统称 hinlink,h68k / linkstar,h68k（通用镜像兜底；
+	# board_name 取的是 compatible 的**第一个**串，本仓库机型走不到这组）。
+	hinlink,opc-h68k-c-d-f|\
+	hinlink,opc-h68k-c-d-f-usb|\
+	hinlink,opc-h68k-c|\
+	hinlink,opc-h68k-c-usb|\
+	hinlink,opc-h68k-c-usb3|\
+	hinlink,opc-h68k-d|\
+	hinlink,opc-h68k-d-usb|\
+	linkstar,opc-h68k-c|\
+	linkstar,opc-h68k-d|\
+	hinlink,h68k|\
+	linkstar,h68k)
+		ucidef_set_led_netdev "wan" "WAN" "blue:wan" "eth0"
+		;;
+
+	# ---- H68K new（2023末~2024）：新一代，WAN 在 gmac1 ⇒ eth1 ----
+	hinlink,opc-h68k-new)
+		ucidef_set_led_netdev "wan" "WAN" "blue:wan" "eth1"
+		;;
+
+	# ---- H69K 三网口：WAN = eth0（gmac0 被 disabled，gmac1 枚举成 eth0）----
+	hinlink,opc-h69k|\
+	hinlink,h69k)
+		ucidef_set_led_netdev "wan" "WAN" "blue:wan" "eth0"
+		;;
+
+	# ---- H69K-mini 四网口：WAN = eth1（gmac0/gmac1 都开，WAN 在 gmac1）----
+	hinlink,opc-h69k-mini)
+		ucidef_set_led_netdev "wan" "WAN" "blue:wan" "eth1"
+		;;
+
+	# ---- H66K：两个 GMAC 都 disabled，只有 2 路 PCIe 2.5G ----
+	hinlink,opc-h66k|\
+	hinlink,h66k)
+		ucidef_set_led_netdev "wan" "WAN" "blue:wan" "eth0"
+		;;
+
+	# ======================= RK3528 =======================
+
+	# ---- H28K：双口（gmac1 板载 + PCIe RTL8111H）----
+	hinlink,opc-h28k|\
+	hinlink,h28k|\
+	hlink,h28k|\
+	linkstar,h28k|\
+	linkstar,opc-h28k)
+		ucidef_set_led_netdev "wan" "WAN" "blue:wan" "eth1"
+		ucidef_set_led_netdev "lan" "LAN" "amber:lan" "eth0"
+		;;
+
+	# ---- H29K 全系（单口 + 4G/5G 模组灯）----
+	# 厂商固件 01_leds 未列 h29k（落到官方兜底，等于不配 LED）；
+	# 这里按 DTS 的 label 原值补上，两个模组灯默认熄灭。
+	hinlink,opc-h29k|\
+	hinlink,h29k|\
+	hinlink,h29k-v1.3-114|\
+	hinlink,h29k-v1.3-1.14|\
+	hinlink,h29k-v5-114|\
+	hinlink,h29k-v5-1.14|\
+	hinlink,h29k-v5-149|\
+	hinlink,h29k-v5-1.49)
+		ucidef_set_led_default "work" "WORK" "green:work" "1"
+		ucidef_set_led_default "modem_4g" "4G" "red:modem_4g" "0"
+		ucidef_set_led_default "modem_5g" "5G" "blue:modem_5g" "0"
+		;;
+
+	# ---- HT2（单口）----
+	hinlink,opc-ht2|\
+	hinlink,ht2|\
+	hlink,ht2)
+		ucidef_set_led_netdev "lan" "LAN" "amber:lan" "eth0"
+		;;
+
+	# ======================= RK3588 =======================
+
+	# ---- H88K v2 / v3 ----
+	# 标签来自 rk3588-hinlink.dtsi 的 label（旧式，不是 color/function）
+	hinlink,h88k-v2|\
+	hinlink,h88k-v3)
+		ucidef_set_led_netdev "wan" "WAN" "blue:net" "eth0"
+		ucidef_set_led_ide "disk" "DISK" "yellow:disk"
+		;;
+
+	# ---- H89K ----
+	# 厂商固件 01_leds 原值（逐字照抄）：
+	#   ucidef_set_led_netdev "net" "LAN Activity" "green:sys" "br-lan" "tx" "rx"
+	hinlink,opc-h89k|\
+	hinlink,h89k)
+		ucidef_set_led_netdev "net" "LAN Activity" "green:sys" "br-lan" "tx" "rx"
+		;;
+
+esac
+
+board_config_flush
+
+exit 0
