@@ -66,6 +66,8 @@ package/beaverfffan/
 ├── fancontrol / luci-app-fancontrol      ← JiaY-shi 血统，温度控制**默认开**
 ├── luci-app-hinlink-modem-hardreset      ← 自研「5G复位」面板（rpcd shell 插件）
 ├── luci-app-oled                         ← iStoreOS 版 SSD1306（不是 unifreq 那版）
+├── tft-display                           ← H29K SPI 小屏的 LVGL 系统信息页
+├── kmod-input-touchscreen-axs5106        ← 1.49″ 电容触摸（内核外模块）
 └── aic8800                               ← AIC8800 SDIO/PCIe/USB 驱动
 tools/            ← integrate.py / gen_configs.py / build_single.sh …
 configs/          ← 16 份单机型 .config
@@ -333,7 +335,9 @@ OpenWrt 的 `uboot-rockchip` 包靠 `BUILD_DEVICES` **反向关联**设备，且
 
 ## 8. 已知限制
 
-- **H29K / H88K / H89K 的屏没有用户态程序驱动** —— fbtft 只提供 `/dev/fbN`，
+- **H29K 三款的屏已可用**（`tft-display`，LVGL 系统信息页 + 亮度 + 息屏；
+  1.49″ 触摸由 `kmod-input-touchscreen-axs5106` 驱动）。
+  **H88K / H89K 的屏仍只有 `/dev/fbN`**，没有用户态程序。
   `luci-app-oled` 只服务 I²C SSD1306（H69K / H69K-mini）。
 - **h88k-v3 的屏走 `spidev` + 用户态**（DTS 里没有 fbtft 面板参数），
   想改 fbtft 方案要自己补 `panel` 节点（`CONFIG_FB_TFT_ST7789V=y` 已内建）。
