@@ -448,10 +448,6 @@
 	status = "okay";
 };
 
-&rng {
-	status = "okay";
-};
-
 &sdhci {
 	bus-width = <8>;
 	mmc-hs200-1_8v;
