@@ -49,7 +49,11 @@ define Device/hinlink_common
   #     H69K 的 M.2 / PCIe 位插 MT7916（或 MT7915）就靠这两个包。
   #     （对照：kmod-mt7921e 的 DEPENDS 自带 kmod-mt7921-firmware，
   #       所以那一路不用手写 —— 2026-10-12 之前 mt7915e 就是漏在这里。）
-  DEVICE_PACKAGES += kmod-mt7921e kmod-mt7925e kmod-mt7915e kmod-mt7615e \
+  #   ★ MT7922 的内核固件在 6.13 之后**独立成包** `kmod-mt7922-firmware`
+  #     （不再是 mt7921-firmware 的一部分），驱动仍走 kmod-mt7921e
+  #     ⇒ 必须单独点出来，否则 7922 的卡只有驱动没有固件。
+  DEVICE_PACKAGES += kmod-mt7921e kmod-mt7922-firmware kmod-mt7925e \
+	kmod-mt7915e kmod-mt7615e \
 	kmod-mt7915-firmware kmod-mt7916-firmware \
 	kmod-rtw88-8821ce kmod-rtw88-8822be kmod-rtw88-8822ce \
 	kmod-rtw89-8851be kmod-rtw89-8852ae kmod-rtw89-8852be \

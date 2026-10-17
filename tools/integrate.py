@@ -217,20 +217,21 @@ UBOOT_NEW = [
 ]
 
 UBOOT_FIX = {
-    "hinlink-h28k-rk3528": ["hinlink_h28k_rk3528"],
-    "hinlink-h66k-rk3568": ["hinlink_opc-h66k"],
-    "hinlink-h68k-rk3568": ["hinlink_opc-h68k-a-b", "hinlink_opc-h68k-a-b-usb",
-                            "hinlink_opc-h68k-c-d-f", "hinlink_opc-h68k-c-d-f-usb",
-                            "hinlink_opc-h68k-new", "hinlink_opc-h69k",
-                            "hinlink_opc-h69k-mini"],
+    "hinlink-h28k-rk3528": ("rk3528", "HINLINK H28K", ["hinlink_h28k_rk3528"]),
+    "hinlink-h66k-rk3568": ("rk3568", "HINLINK H66K", ["hinlink_opc-h66k"]),
+    "hinlink-h68k-rk3568": ("rk3568", "HINLINK H68K",
+                            ["hinlink_opc-h68k-a-b", "hinlink_opc-h68k-a-b-usb",
+                             "hinlink_opc-h68k-c-d-f", "hinlink_opc-h68k-c-d-f-usb",
+                             "hinlink_opc-h68k-new", "hinlink_opc-h69k",
+                             "hinlink_opc-h69k-mini"]),
 }
 
 
 def uboot_block(name, tpl, title, devs):
     s = "define U-Boot/%s\n  $(U-Boot/%s/Default)\n  NAME:=%s\n  BUILD_DEVICES:= \\\n" \
         % (name, tpl, title)
-    s += "".join("    %s \\\n" % d for d in devs)
-    s = s[:-2] + "\nendef\n"          # 去掉最后一行的续行符
+    s += "".join("    %s \\\n" % d for d in devs[:-1])
+    s += "    %s\nendef\n" % devs[-1]        # 最后一项不带续行符
     return s
 
 
@@ -241,16 +242,17 @@ def edit_uboot(dst):
         return
     t = rd(p)
 
-    for name, devs in UBOOT_FIX.items():                    # 1) 对齐 BUILD_DEVICES
-        pat = re.compile(r'(define U-Boot/%s\n(?:.*\n)*?  BUILD_DEVICES:= \\\n)'
-                         r'((?:    \S+ \\\n)+)' % re.escape(name))
-        m = pat.search(t)
+    # 1) 已有变体：整块重写（★ 不能只替换 BUILD_DEVICES 的那几行 ——
+    #    上游最后一项**不带续行符**，用 `(?:    \S+ \\\n)+` 会一行都匹配不到，
+    #    静默失败；2026-10-17 就是这样白跑了一轮）
+    for name, (tpl, title, devs) in UBOOT_FIX.items():
+        m = re.search(r'define U-Boot/%s\n(?:.*\n)*?endef\n' % re.escape(name), t)
         if not m:
-            print("  !! 未找到 U-Boot/%s 的 BUILD_DEVICES" % name)
+            print("  !! 未找到 U-Boot/%s 的定义块" % name)
             continue
-        new = "".join("    %s \\\n" % d for d in devs)
-        if m.group(2) != new:
-            t = t[:m.start(2)] + new + t[m.end(2):]
+        new = uboot_block(name, tpl, title, devs)
+        if t[m.start():m.end()] != new:
+            t = t[:m.start()] + new + t[m.end():]
 
     anchor = "UBOOT_TARGETS := \\\n"
     if anchor not in t:
@@ -271,6 +273,18 @@ def edit_uboot(dst):
     wr(p, t)
     print("  uboot-rockchip/Makefile：3 个变体 BUILD_DEVICES 已对齐，补 %d 个变体"
           % len(UBOOT_NEW))
+    # ★★ 必须清掉包元数据缓存，否则 tmp/.config-package.in 里还是旧的
+    #    `default y if ... DEVICE_hinlink_h68k`（上游名），新的 device 名
+    #    永远选不上 u-boot 包 ⇒ image 阶段报
+    #      dd: failed to open '.../hinlink-h68k-rk3568-u-boot-rockchip.bin'
+    #    然后 `make defconfig` 会按新 BUILD_DEVICES 自动选 u-boot 包。
+    for c in ("tmp/.packageinfo", "tmp/.targetinfo",
+              "tmp/.config-package.in", "tmp/.packagedeps"):
+        f = os.path.join(dst, c)
+        if os.path.exists(f):
+            os.remove(f)
+    print("  已清 tmp/.packageinfo / .targetinfo / .config-package.in / .packagedeps"
+          "（必须随后重跑 make defconfig）")
 
 
 # --------------------------------------------------------------------------

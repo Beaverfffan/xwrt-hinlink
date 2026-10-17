@@ -4,6 +4,18 @@
 #   标记之外的解释性注释也算「段内」，删段时会一起删掉 —— 否则每跑一次
 #   都会把注释再叠一遍（2026-10-17 实测踩过）。
 #
+# ---- ★ 必须关掉 CONFIG_WERROR ----
+# x-wrt 的 generic config-6.18 里写的就是 `# CONFIG_WERROR is not set`
+# （第 8301 行），但合并后的内核 .config 里却是 `CONFIG_WERROR=y`
+# （6.18 的 WERROR 默认 =y）⇒ 第三方 out-of-tree 驱动全被当错误：
+#   aic8800_bsp/aic8800dc_compat.c:1920: error: no previous prototype for
+#     'set_bbpll_config' [-Werror=missing-prototypes]
+#   aic8800_bsp/aic8800d80x2_compat.c:62: error: this use of "defined"
+#     may not be portable [-Werror=expansion-to-defined]
+#   cc1: all warnings being treated as errors
+# 本段是最后追加的，写在这里能压过默认值。
+# CONFIG_WERROR is not set
+#
 # 目的：把 framebuffer / fbtft 小屏栈在 rockchip target 上**内建成 =y**。
 #
 # 背景（实证）：immortalwrt 的 FB 栈被 `package/kernel/linux/modules/video.mk`
@@ -36,7 +48,18 @@
 # ⚠️ 若将来变成 =m，就要等 kmods 服务加载，那时脚本可能看不到设备。
 #    所以这里**显式写死 =y**，不去依赖 rockchip armv8 config-6.18 里
 #    那一行（那是上游的，可能被改）。
+#
+# ★★ 6.18 把 rfkill 拆成了两个符号（x-wrt 实测）：
+#      net/rfkill/Kconfig:
+#        config RFKILL        bool, default y        ← 内核核心位（一直 y）
+#        menuconfig RFKILL_FULL   tristate "RF switch subsystem support"
+#        config RFKILL_GPIO   depends on RFKILL_FULL  ← ★ 必须先开 FULL！
+#    只写 CONFIG_RFKILL=y 时 RFKILL_FULL 默认 n ⇒ **RFKILL_GPIO 这个符号
+#    根本不可见**，oldconfig 把它静默丢掉（.config 里连一行都不留），
+#    5G 复位面板就找不到 /sys/class/rfkill/rfkillN —— 而且不报任何错。
+#    2026-10-17 就是因为这个，'.config' 里只有 CONFIG_RFKILL=y。
 CONFIG_RFKILL=y
+CONFIG_RFKILL_FULL=y
 CONFIG_RFKILL_GPIO=y
 
 CONFIG_FB=y

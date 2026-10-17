@@ -71,9 +71,16 @@ endef
 define KernelPackage/aic8800-sdio/config
 	# ★ 也不能在外面套 `if PACKAGE_kmod-aic8800-sdio` / `endif`：
 	#   那样符号会依赖 PACKAGE_kmod-aic8800-sdio，同样成环。
+	# ★ 默认必须 **n**：打开了它驱动会引用 Bluetooth HCI 符号
+	#   （hci_register_dev / hci_recv_frame / hci_unregister_dev），
+	#   而我们上面为了避开 kconfig 成环已经把 kmod-bluetooth 的条件依赖去掉了
+	#   ⇒ 内核没编 BT 时 modpost 直接失败：
+	#       ERROR: modpost: "hci_register_dev" [aic8800_fdrv.ko] undefined!
+	#   要用蓝牙就同时开：CONFIG_AIC8800_SDIO_BT_SUPPORT=y +
+	#   CONFIG_PACKAGE_kmod-bluetooth=y（并接受 SDIO BT 的 input-support 依赖）。
 	config AIC8800_SDIO_BT_SUPPORT
-		bool "Enable Bluetooth support"
-		default y
+		bool "Enable Bluetooth support (needs kmod-bluetooth)"
+		default n
 endef
 
 define KernelPackage/aic8800-usb
@@ -103,6 +110,7 @@ ifneq ($(CONFIG_PACKAGE_kmod-aic8800-btusb),)
 	+$(KERNEL_MAKE) $(PKG_JOBS) \
 		M="$(PKG_BUILD_DIR)/src/USB/driver_fw/drivers/aic_btusb" \
 		NOSTDINC_FLAGS="$(NOSTDINC_FLAGS)" \
+		KCFLAGS="-Wno-error" \
 		CONFIG_AIC_FW_PATH="/lib/firmware/aic8800/usb" \
 		modules
 endif
@@ -110,6 +118,7 @@ ifneq ($(CONFIG_PACKAGE_kmod-aic8800-sdio),)
 	+$(KERNEL_MAKE) $(PKG_JOBS) \
 		M="$(PKG_BUILD_DIR)/src/SDIO/driver_fw/driver/aic8800" \
 		NOSTDINC_FLAGS="$(NOSTDINC_FLAGS)" \
+		KCFLAGS="-Wno-error" \
 		CONFIG_AIC_FW_PATH="/lib/firmware/aic8800/sdio" \
 		CONFIG_AIC8800_BTLPM_SUPPORT=n \
 		CONFIG_SDIO_BT=$(if $(CONFIG_AIC8800_SDIO_BT_SUPPORT),y,n) \
@@ -119,6 +128,7 @@ ifneq ($(CONFIG_PACKAGE_kmod-aic8800-pcie),)
 	+$(KERNEL_MAKE) $(PKG_JOBS) \
 		M="$(PKG_BUILD_DIR)/src/PCIE/driver_fw/driver/aic8800/aic8800_fdrv" \
 		NOSTDINC_FLAGS="$(NOSTDINC_FLAGS)" \
+		KCFLAGS="-Wno-error" \
 		CONFIG_AIC_FW_PATH="/lib/firmware/aic8800/pcie" \
 		modules
 endif
@@ -126,6 +136,7 @@ ifneq ($(CONFIG_PACKAGE_kmod-aic8800-usb),)
 	+$(KERNEL_MAKE) $(PKG_JOBS) \
 		M="$(PKG_BUILD_DIR)/src/USB/driver_fw/drivers/aic8800" \
 		NOSTDINC_FLAGS="$(NOSTDINC_FLAGS)" \
+		KCFLAGS="-Wno-error" \
 		CONFIG_AIC_FW_PATH="/lib/firmware/aic8800/usb" \
 		modules
 endif

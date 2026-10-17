@@ -255,7 +255,50 @@ OpenWrt 的 `uboot-rockchip` 包靠 `BUILD_DEVICES` **反向关联**设备，且
 `base-files/etc/rc.d/` 里同时放 `Sxx<name>` 软链（会被原样拷进 rootfs）。
 要早于网络 ⇒ `START=19`（`network` 是 20）。
 
-### 6.7 网口编号的两个坑
+### 6.7 ★ x-wrt 编译期必须处理的三个开关（都实测踩过）
+
+这三个不处理，`make` 会以完全看不出根因的方式失败：
+
+1. **`CONFIG_RFKILL_FULL=y`（6.18 拆分了 rfkill）**
+   `net/rfkill/Kconfig` 现在是：
+   ```
+   config RFKILL          bool, default y      ← 核心位，一直 y
+   menuconfig RFKILL_FULL tristate "RF switch subsystem support"
+   config RFKILL_GPIO     depends on RFKILL_FULL   ← 必须先开 FULL
+   ```
+   只写 `CONFIG_RFKILL=y` 时 `RFKILL_FULL` 默认 **n** ⇒ **`RFKILL_GPIO`
+   这个符号根本不可见**，oldconfig 把它静默丢掉（`.config` 里连一行都不留），
+   5G 复位面板就找不到 `/sys/class/rfkill/rfkillN`——而且**不报任何错**。
+   已写进 `hinlink-config.append`。
+
+2. **`CONFIG_WERROR` 是 `y`，第三方 out-of-tree 驱动会被当错误**
+   6.18 的 `CONFIG_WERROR` 默认 `default COMPILE_TEST`（=n），但合并出来的
+   内核 `.config` 里却是 `CONFIG_WERROR=y`；`aic8800` 直接炸在
+   `-Werror=missing-prototypes` / `-Werror=expansion-to-defined`。
+   在 target config 里写 `# CONFIG_WERROR is not set` **对这个树无效**
+   （手写 `scripts/config -d WERROR` 却能生效，说明是合并管线的问题，
+   见 `hinlink-config.append` 里的说明）。真正管用的做法是给驱动自己加：
+   ```make
+   KCFLAGS="-Wno-error" \      # 加在每次 $(KERNEL_MAKE) 调用上
+   ```
+   已加进 `aic8800/Makefile` 的 4 处 `$(KERNEL_MAKE)` 调用。
+   ⇒ 以后接任何 out-of-tree 驱动模块，先按这个套路加。
+
+3. **`aic8800` 的 BT 编译开关必须默认 n**
+   打开 `CONFIG_AIC8800_SDIO_BT_SUPPORT` 后驱动会引用 Bluetooth HCI 符号
+   （`hci_register_dev` / `hci_recv_frame` / `hci_unregister_dev`），
+   而为了避开 kconfig 成环我们已经去掉了 `kmod-bluetooth` 的条件依赖
+   ⇒ `modpost: "hci_register_dev" [aic8800_fdrv.ko] undefined!`。
+   要蓝牙就同时开该符号 + `CONFIG_PACKAGE_kmod-bluetooth=y`。
+
+另外**两个上游补丁必须删掉**（`integrate.py` 已自动删）：
+`patches-6.18/101-...-Add-HINLINK-H28K.patch` 用 `patch` **新建**
+`rk3528-hinlink-h28k.dts`，与 `files/` 里的同名文件撞车 ⇒ 内核 prepare 直接
+`The next patch would create the file … which already exists! Hunk #1 FAILED`；
+`121-...-led-aliases-for-HINLINK.patch` 改的是同一批 dts 的 `led-*` alias，
+我们**已经写进自己的 dts**，留着只会二次冲突。
+
+### 6.8 网口编号的两个坑
 
 - **kmodloader 按 `/etc/modules.d/<名>` 的文件名字典序加载**（内部 `glob()`），
   **不是**按总线枚举顺序 ⇒ 跨总线的同类网卡谁先拿到 `eth0` 由模块名排序决定。
