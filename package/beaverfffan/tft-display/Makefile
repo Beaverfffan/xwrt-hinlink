@@ -50,6 +50,9 @@ define Package/$(PKG_NAME)/description
 endef
 
 # 源码在 clone 下来的 monorepo 的 tft-display/ 子目录里。
+# ★ 本目录下的 `files/`（init.d / uci-defaults / config / 两个 lua）只是**参考副本**，
+#   install 用的是源码树里的 `$(TFT_SRC)/files`。留一份是为了看清我们依赖哪些文件、
+#   以及便于 diff（上游那几份是 CRLF，git 里必须保持 LF）。
 TFT_SRC=$(PKG_BUILD_DIR)/tft-display
 
 # ⚠️ CFLAGS / LDFLAGS 必须用**环境变量**方式传（`VAR=... $(MAKE)`）；
