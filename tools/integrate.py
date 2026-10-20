@@ -288,6 +288,75 @@ def edit_uboot(dst):
 
 
 # --------------------------------------------------------------------------
+def fix_wifi_init(dst):
+    """x-wrt 的 base-config-setting/wifi-init.sh 会给每个 5g radio **再开一个**
+    `${SSID}_5G` 的 AP，判据只有「phy0 是不是 mt76」。MT7915 上没问题
+    （`if_limits` 里 `AP <= 16`），但 MT7921/7922/7925 的 wiphy 只声明
+    `#{AP} <= 1`（`mt792x_core.c` 的 `if_limits[]`）⇒ 第二个 AP 的 netdev
+    在 up 时被 cfg80211 拒掉（`cfg80211_check_combinations()` 找不到组合
+    → `-EBUSY`），hostapd 随即把这个 radio 的所有 BSS deinit 后退出
+    （`src/ap/hostapd.c` 里 `hostapd_setup_bss()` 失败会逐个 deinit 并
+    `goto fail`），结果整个 radio 一个 SSID 都起不来。
+
+    这里做两处**幂等**改动（带 marker，重复跑不再动）：
+      1. 在脚本开头插一个 `hinlink_has_single_ap_mt76()` 判断；
+      2. 把那句判据加上 `&& ! hinlink_has_single_ap_mt76`。
+    """
+    p = os.path.join(dst, "feeds/x/base-config-setting/files/wifi-init.sh")
+    if not os.path.exists(p):
+        print("  (无 feeds/x/base-config-setting/wifi-init.sh，跳过)")
+        return
+    t = rd(p)
+    if "HINLINK_MT792X_SINGLE_AP" in t:
+        print("  = wifi-init.sh 已打过补丁，跳过")
+        return
+
+    helper = '''#!/bin/sh
+
+# ---- HINLINK_MT792X_SINGLE_AP begin ----
+# MT7921/7922/7925（mt792x）的 wiphy 只允许 **1 个 AP**：
+#   drivers/net/wireless/mediatek/mt76/mt792x_core.c
+#     if_limits[] = { { .max = MT792x_MAX_INTERFACES, STATION },
+#                     { .max = 1, AP } };
+# 再加一个 AP（下面那段 `${SSID}_5G`）时，netdev up 会走
+#   ieee80211_do_open() -> ieee80211_check_concurrent_iface()
+#   -> ieee80211_check_combinations() -> cfg80211_check_combinations()
+# 找不到可用组合，返回 -EBUSY（net/wireless/util.c: `if (num == 0) return -EBUSY;`）。
+# hostapd 随后把该 radio 的所有 BSS deinit 并退出，日志是
+#   "wlanX: Unable to setup interface."（src/ap/hostapd.c）
+# ⇒ 整个 5G radio 一个 SSID 都起不来（客户端看到 SSID 也连不上）。
+# 对比 mt7915：if_limits 里 `{ .max = 16, AP }`，所以那边一直没事。
+hinlink_has_single_ap_mt76() {
+\tlocal d drv
+\tfor d in /sys/class/ieee80211/phy*; do
+\t\t[ -e "$d" ] || continue
+\t\tdrv=$(basename "$(readlink -f "$d/device/driver" 2>/dev/null)" 2>/dev/null)
+\t\tcase "$drv" in
+\t\t\tmt7921e|mt7921s|mt7921u|mt7922e|mt7925e|mt7925u)
+\t\t\t\treturn 0
+\t\t\t\t;;
+\t\tesac
+\tdone
+\treturn 1
+}
+# ---- HINLINK_MT792X_SINGLE_AP end ----
+'''
+    t = t.replace("#!/bin/sh\n", helper, 1)
+
+    old = ('\t\t\tif [ "$(uci get wireless.${radio}.band 2>/dev/null)" = "5g" ]'
+           ' && test -e /sys/kernel/debug/ieee80211/phy0/mt76; then')
+    new = ('\t\t\t# ★ mt792x 只允许 1 个 AP，见文件头的 HINLINK_MT792X_SINGLE_AP\n'
+           '\t\t\tif [ "$(uci get wireless.${radio}.band 2>/dev/null)" = "5g" ]'
+           ' && test -e /sys/kernel/debug/ieee80211/phy0/mt76'
+           ' && ! hinlink_has_single_ap_mt76; then')
+    if old not in t:
+        print("  !! wifi-init.sh 里没找到 5g 额外 AP 的判据，未打补丁")
+        return
+    t = t.replace(old, new, 1)
+    wr(p, t)
+    print("  + wifi-init.sh：mt792x 不再额外开 ${SSID}_5G")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=os.path.expanduser("~/xwrt-adapt"))
@@ -435,6 +504,9 @@ def main():
 
     print("[9] U-Boot 变体登记")
     edit_uboot(dst)
+
+    print("[10] x-wrt wifi-init.sh（mt792x 只允许 1 个 AP）")
+    fix_wifi_init(dst)
 
     print("\n集成完成。下一步：")
     print("  cd %s && cp configs/<机型>.config .config && make defconfig" % dst)

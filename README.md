@@ -312,13 +312,69 @@ OpenWrt 的 `uboot-rockchip` 包靠 `BUILD_DEVICES` **反向关联**设备，且
   取法：`readlink -f /sys/class/net/<if>/device` 逐段找 `.pcie` 结尾的名字
   （`grep fe2xxxxx` 匹配不到）。
 
+### 6.9 ★ 默认只许**一个** 5G AP（MT7921 只有 1 个 AP 额度）
+
+**现象**：开机后 5G 上有两个 SSID（`X-WRT` 与 `X-WRT_5G`），客户端能扫到但连不上。
+
+**来源不是 `wifi config`，是 x-wrt 自己的 `wifi-init.sh`**
+（`feeds/x/base-config-setting/files/wifi-init.sh`，首次启动由
+`/etc/init.d/wifi-init`（START=19）调用一次 `wifi_first_init`）：
+
+```sh
+if [ "$(uci get wireless.${radio}.band)" = "5g" ] && test -e /sys/kernel/debug/ieee80211/phy0/mt76; then
+	obj=$(uci add wireless wifi-iface)
+	uci set wireless.$obj.ssid="${SSID}_5G"
+	...
+fi
+```
+
+判据只有「`phy0` 是不是 mt76」。这段本来是给 **MT7915** 写的，那时没问题：
+
+| 驱动 | `if_limits[]` 里的 AP 上限 | 出处 |
+|---|---|---|
+| mt7915 | **16** | `mt76/mt7915/init.c` |
+| **mt7921 / 7922 / 7925** | **1** | `mt76/mt792x_core.c` |
+
+```c
+/* mt792x_core.c */
+static const struct ieee80211_iface_limit if_limits[] = {
+	{ .max = MT792x_MAX_INTERFACES, .types = BIT(NL80211_IFTYPE_STATION) },
+	{ .max = 1,                     .types = BIT(NL80211_IFTYPE_AP) },   /* ← 只有 1 */
+};
+```
+
+所以两个 AP 的连锁反应是：
+
+1. 第二个 netdev 能建出来，但 `ip link set up` 时 mac80211 走
+   `ieee80211_do_open()` → `ieee80211_check_concurrent_iface()` →
+   `ieee80211_check_combinations()` → `cfg80211_check_combinations()`；
+   组合表里 `#{AP} <= 1` 已经用满 ⇒ `num == 0` ⇒ **`-EBUSY`**
+   （`net/wireless/util.c`）。
+2. hostapd 一个进程管一个 radio 的所有 BSS。`hostapd_setup_bss()` 对第 2 个 BSS
+   失败后会把 **j=0 的主 BSS 一起 deinit** 再 `goto fail`
+   （`src/ap/hostapd.c`，`setup_interface2()` 的循环），最后
+   `hostapd_setup_interface()` 打印 `Unable to setup interface.` 并退出。
+3. ⇒ **这个 radio 上一个 SSID 都起不来**（2.4G 的 radio 是另一个进程，不受影响）。
+
+**修法**：`tools/integrate.py` 的第 10 步给 `wifi-init.sh` 打一个幂等补丁，
+在判据后面加 `&& ! hinlink_has_single_ap_mt76`；后者扫
+`/sys/class/ieee80211/phy*/device/driver`，命中
+`mt7921e|mt7921s|mt7921u|mt7922e|mt7925e|mt7925u` 就不再加这个 AP。
+
+⚠️ 注意两点：
+- 补丁写在 **feed 目录**里（`feeds/x/...`），`./scripts/feeds update -a` 会把它冲掉
+  ⇒ **feeds 更新之后必须重跑 `tools/integrate.py`**（它带 marker，幂等）。
+- 老配置里已经有那条 `*_5G` 的 wifi-iface 时，补丁不会帮你删（`wifi_first_init`
+  只在 `base_config.status.wifi_init=0` 时跑）。保留配置升级的机器要么恢复出厂，
+  要么手动 `uci delete wireless.<那条>` + `uci commit wireless` + `wifi reload`。
+
 ---
 
 ## 7. 工具
 
 | 脚本 | 作用 |
 |---|---|
-| `tools/integrate.py` | 把本仓库合并进 x-wrt 树（board.d 分支级合并、armv8.mk 设备替换、U-Boot 变体登记）。**幂等**，重复跑结果一致 |
+| `tools/integrate.py` | 把本仓库合并进 x-wrt 树（board.d 分支级合并、armv8.mk 设备替换、U-Boot 变体登记、**wifi-init.sh 的 mt792x 单 AP 补丁**）。**幂等**，重复跑结果一致 |
 | `tools/gen_configs.py` | 由一份全机型 `.config` 生成 16 份单机型 config，并校验"该选的包还在、不该选的不在" |
 | `tools/build_single.sh` | 逐机型编译（单机型模式），带 feed 同名包清理、断点续跑 |
 | `tools/gen_release_cfg.py` | 发行版 config（分区 128/1024 + passwall/openclash/ttyd/upnp） |
