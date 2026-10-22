@@ -356,15 +356,41 @@ static const struct ieee80211_iface_limit if_limits[] = {
    `hostapd_setup_interface()` 打印 `Unable to setup interface.` 并退出。
 3. ⇒ **这个 radio 上一个 SSID 都起不来**（2.4G 的 radio 是另一个进程，不受影响）。
 
-**修法**：`tools/integrate.py` 的第 10 步给 `wifi-init.sh` 打一个幂等补丁，
-在判据后面加 `&& ! hinlink_has_single_ap_mt76`；后者扫
-`/sys/class/ieee80211/phy*/device/driver`，命中
-`mt7921e|mt7921s|mt7921u|mt7922e|mt7925e|mt7925u` 就不再加这个 AP。
+**上游已修（`com.x-wrt` 2026-10-21）**
+
+| 提交 | 做了什么 |
+|---|---|
+| `dd88782` | **do not set SSID_5G for single BSS and fix hardcoded phy0** |
+| `d13ee65` | improve Cypress/Broadcom detection and fix htmode |
+
+上游的做法（比“按驱动名拉黑”更通用）：
+
+1. 新增 `wifi_get_phy()` —— 从 radio 自己解析 phy（`phy` 字段 → `path[+N]` 按
+   `/sys/class/ieee80211/*/index` 排序取第 N 个 → `radioN` 兜底），**不再写死 phy0**。
+2. 新增 `wifi_is_mt76()` —— debugfs 有 `mt76/` **或** 驱动名匹配 `*mt7*`。
+   （原来只认 debugfs，没挂 debugfs 就整段失效。）
+3. 新增 `wifi_is_single_bss()`，三级判断：
+   - ① `iw phy $phy info | grep -E '#\{ AP \} <= 1'` —— **通用**，任何只有 1 个
+     AP 额度的驱动都能识别（我们镜像里 `iw` 是装了的）；
+   - ② 驱动名 `*mt792*`；
+   - ③ debugfs 的 `mt76/deep-sleep`（mt792x 独有节点）。
+4. 判据变成
+   `band=5g && wifi_is_mt76 "$phy" && ! wifi_is_single_bss "$phy"`。
+
+**我们的接法**：`26.10_b202610170051` 这条 feed 分支还没有这两个提交
+（已核对：该分支的 `wifi-init.sh` 仍是旧逻辑），所以 `tools/integrate.py` 第 10 步
+**直接铺上游 master 版的整份脚本**（存于
+`feed-files/base-config-setting/wifi-init.sh`，约 275 行）。
+它带**自失效**判断：树里的文件一旦已经含 `wifi_is_single_bss`（说明 feeds 更新到
+含 `dd88782` 的版本），这一步直接跳过，不会覆盖上游后续的新内容。
+
+> 曾经写过一版临时补丁（按驱动名 `mt7921e|mt7921s|…` 拉黑 + 保留写死 phy0），
+> 已废弃 —— 覆盖面窄，且 `phy0` 不是 mt76 的板子会连 2.4G/5G 判断都错位。
 
 ⚠️ 注意两点：
-- 补丁写在 **feed 目录**里（`feeds/x/...`），`./scripts/feeds update -a` 会把它冲掉
-  ⇒ **feeds 更新之后必须重跑 `tools/integrate.py`**（它带 marker，幂等）。
-- 老配置里已经有那条 `*_5G` 的 wifi-iface 时，补丁不会帮你删（`wifi_first_init`
+- 覆盖的是 **feed 目录**里的文件（`feeds/x/...`），`./scripts/feeds update -a`
+  会把它冲掉 ⇒ feeds 更新之后重跑 `tools/integrate.py` 即可（幂等）。
+- 老配置里已经有那条 `*_5G` 的 wifi-iface 时，覆盖脚本不会帮你删（`wifi_first_init`
   只在 `base_config.status.wifi_init=0` 时跑）。保留配置升级的机器要么恢复出厂，
   要么手动 `uci delete wireless.<那条>` + `uci commit wireless` + `wifi reload`。
 
@@ -374,7 +400,7 @@ static const struct ieee80211_iface_limit if_limits[] = {
 
 | 脚本 | 作用 |
 |---|---|
-| `tools/integrate.py` | 把本仓库合并进 x-wrt 树（board.d 分支级合并、armv8.mk 设备替换、U-Boot 变体登记、**wifi-init.sh 的 mt792x 单 AP 补丁**）。**幂等**，重复跑结果一致 |
+| `tools/integrate.py` | 把本仓库合并进 x-wrt 树（board.d 分支级合并、armv8.mk 设备替换、U-Boot 变体登记、**铺上游 `wifi-init.sh` 的 mt792x 单 AP 修复**）。**幂等**，重复跑结果一致 |
 | `tools/gen_configs.py` | 由一份全机型 `.config` 生成 16 份单机型 config，并校验"该选的包还在、不该选的不在" |
 | `tools/build_single.sh` | 逐机型编译（单机型模式），带 feed 同名包清理、断点续跑 |
 | `tools/gen_release_cfg.py` | 发行版 config（分区 128/1024 + passwall/openclash/ttyd/upnp） |
